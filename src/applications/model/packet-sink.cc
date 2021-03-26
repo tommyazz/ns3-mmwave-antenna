@@ -237,6 +237,13 @@ PacketSink::PacketReceived (const Ptr<Packet> &p, const Address &from,
   while (buffer->GetSize () >= header.GetSize ())
     {
       NS_LOG_DEBUG ("Removing packet of size " << header.GetSize () << " from buffer of size " << buffer->GetSize ());
+      if (header.GetSize () == 0)
+        {
+          // corrupted packet, remove content from the buffer
+          buffer->RemoveAtStart (buffer->GetSize ());
+          break;
+        }
+
       Ptr<Packet> complete = buffer->CreateFragment (0, static_cast<uint32_t> (header.GetSize ()));
       buffer->RemoveAtStart (static_cast<uint32_t> (header.GetSize ()));
 
