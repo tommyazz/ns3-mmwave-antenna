@@ -90,6 +90,14 @@ Tx (uint32_t appId, Ptr<const Packet> pkt, const Address &rxAddr, const Address 
   *stream4->GetStream () << appId << "\t" << Simulator::Now ().GetSeconds () << "\t" << hdr.GetSeq () << "\t" << pkt->GetSize () << std::endl;
 }
 
+static void
+Sinr (uint32_t ueId, uint64_t imsi, SpectrumValue& oldSinr, SpectrumValue& newSinr)
+{
+  double sinr = Sum (newSinr) / (newSinr.GetSpectrumModel ()->GetNumBands ());
+  NS_LOG_DEBUG (Simulator::Now ().GetSeconds () << "\t" << 10*log10 (sinr) << " dB");
+  *stream3->GetStream () << ueId << "\t" << Simulator::Now ().GetSeconds () << "\t" << sinr << std::endl;
+}
+
 int
 main (int argc, char *argv[])
 {
@@ -122,6 +130,7 @@ main (int argc, char *argv[])
   CommandLine cmd;
   cmd.AddValue ("rlcAmEnabled", "Enable RLC AM mode at RLC layer", rlcAmEnabled);
   cmd.AddValue ("harqEnabled", "Enable HARQ at the MAC layer", harqEnabled);
+  cmd.AddValue ("bandwidth", "The bandwidth of the simulation", bandwidth);
   cmd.AddValue ("updatePeriod", "Channel/channel condition update periodicity [ms]", updatePeriod);
   cmd.AddValue ("blockage", "Enable blockage model A of the 3GPP channel model", isBlockage);
   cmd.AddValue ("nonSelfBlocking", "Number of non self-blocking components", nonSelfBlocking);
@@ -409,6 +418,20 @@ main (int argc, char *argv[])
   stream2 = asciiTraceHelper.CreateFileStream (outputFolder+"rx-packet-trace.csv");
   stream3 = asciiTraceHelper.CreateFileStream (outputFolder+"sinr-trace.csv");
   stream4 = asciiTraceHelper.CreateFileStream (outputFolder+"tx-packet-trace.csv");
+
+  Ptr<MmWaveUePhy> uePhy;
+  for (uint32_t i = 0; i < ueDevs.GetN (); ++i)
+  {
+    if (isMc)
+    {
+      uePhy = StaticCast <McUeNetDevice> (ueDevs.Get (i))->GetMmWavePhy ();
+    }
+    else
+    {
+      uePhy = StaticCast <MmWaveUeNetDevice> (ueDevs.Get (i))->GetPhy ();
+    }
+    uePhy->TraceConnectWithoutContext ("ReportCurrentCellRsrpSinr", MakeBoundCallback (&Sinr, i));
+  }
 
   // App layer traces: collect statistics of intended UEs
   for (uint32_t i = 0; i < serverApps.GetN (); ++i)
