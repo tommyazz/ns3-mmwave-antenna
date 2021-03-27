@@ -98,6 +98,24 @@ Sinr (uint32_t ueId, uint64_t imsi, SpectrumValue& oldSinr, SpectrumValue& newSi
   *stream3->GetStream () << ueId << "\t" << Simulator::Now ().GetSeconds () << "\t" << sinr << std::endl;
 }
 
+static ns3::GlobalValue g_bufferSize ("bufferSize", "RLC tx buffer size (MB)",
+                                      ns3::UintegerValue (20), ns3::MakeUintegerChecker<uint32_t> ());
+static ns3::GlobalValue g_x2Latency ("x2Latency", "Latency on X2 interface (us)",
+                                     ns3::DoubleValue (500), ns3::MakeDoubleChecker<double> ());
+static ns3::GlobalValue g_mmeLatency ("mmeLatency", "Latency on MME interface (us)",
+                                      ns3::DoubleValue (10000), ns3::MakeDoubleChecker<double> ());
+static ns3::GlobalValue g_noiseAndFilter ("noiseAndFilter", "If true, use noisy SINR samples, filtered. If false, just use the SINR measure",
+                                          ns3::BooleanValue (false), ns3::MakeBooleanChecker ());
+static ns3::GlobalValue g_handoverMode ("handoverMode",
+                                        "Handover mode",
+                                        ns3::UintegerValue (3), ns3::MakeUintegerChecker<uint8_t> ());
+static ns3::GlobalValue g_reportTablePeriodicity ("reportTablePeriodicity", "Periodicity of RTs",
+                                                  ns3::UintegerValue (1600), ns3::MakeUintegerChecker<uint32_t> ());
+static ns3::GlobalValue g_outageThreshold ("outageTh", "Outage threshold",
+                                           ns3::DoubleValue (-5), ns3::MakeDoubleChecker<double> ());
+static ns3::GlobalValue g_lteUplink ("lteUplink", "If true, always use LTE for uplink signalling",
+                                     ns3::BooleanValue (false), ns3::MakeBooleanChecker ());
+
 int
 main (int argc, char *argv[])
 {
@@ -120,10 +138,6 @@ main (int argc, char *argv[])
   std::string scenario = "UMi-StreetCanyon"; // 3GPP propagation scenario (Urban-Micro)
   bool isBlockage = false; // enable blockage modeling
   bool isMc = false; // whether to add multi-connectivity with eNodeB (LTE) in the simulation
-  uint32_t bufferSize = 20; // buffer size [MByte] 
-  uint8_t hoMode = 3; // handover mode
-  double outThreshold = -5.0; // outage threshold [dB]
-  uint32_t reportTablePeriodicity = 1600; // report table periodicity 
   bool enableLog = false;
 
   // Command line arguments
@@ -144,9 +158,15 @@ main (int argc, char *argv[])
     LogComponentEnable ("MmWaveHelper", LOG_LEVEL_ALL);
   } 
 
+  UintegerValue uintegerValue;
+  BooleanValue booleanValue;
+  StringValue stringValue;
+  DoubleValue doubleValue;
+
   // Variables for the RT
   int windowForTransient = 150; // number of samples for the vector to use in the filter
-  int ReportTablePeriodicity = (int)reportTablePeriodicity; // in microseconds
+  GlobalValue::GetValueByName ("reportTablePeriodicity", uintegerValue);
+  int ReportTablePeriodicity = (int)uintegerValue.Get (); // in microseconds
   if (ReportTablePeriodicity == 1600)
     {
       windowForTransient = 150;
@@ -164,6 +184,20 @@ main (int argc, char *argv[])
       NS_ASSERT_MSG (false, "Unrecognized");
     }
   int vectorTransient = windowForTransient * ReportTablePeriodicity;
+
+  // params for RT, filter, HO mode
+  GlobalValue::GetValueByName ("noiseAndFilter", booleanValue);
+  bool noiseAndFilter = booleanValue.Get ();
+  GlobalValue::GetValueByName ("handoverMode", uintegerValue);
+  uint8_t hoMode = uintegerValue.Get ();
+  GlobalValue::GetValueByName ("outageTh", doubleValue);
+  double outageTh = doubleValue.Get ();
+  GlobalValue::GetValueByName ("bufferSize", uintegerValue);
+  uint32_t bufferSize = uintegerValue.Get ();
+  GlobalValue::GetValueByName ("x2Latency", doubleValue);
+  double x2Latency = doubleValue.Get ();
+  GlobalValue::GetValueByName ("mmeLatency", doubleValue);
+  double mmeLatency = doubleValue.Get ();
   double transientDuration = double(vectorTransient) / 1000000;
 
   std::cout << "rlcAmEnabled: " << rlcAmEnabled << std::endl;
@@ -198,11 +232,11 @@ main (int argc, char *argv[])
   Config::SetDefault ("ns3::LteRlcUmLowLat::ReportBufferStatusTimer", TimeValue (MicroSeconds (100.0)));
   Config::SetDefault ("ns3::LteEnbRrc::SrsPeriodicity", UintegerValue (320));
   Config::SetDefault ("ns3::LteEnbRrc::FirstSibTime", UintegerValue (2));
-  Config::SetDefault ("ns3::MmWavePointToPointEpcHelper::X2LinkDelay", TimeValue (MicroSeconds (500)));
+  Config::SetDefault ("ns3::MmWavePointToPointEpcHelper::X2LinkDelay", TimeValue (MicroSeconds (x2Latency)));
   Config::SetDefault ("ns3::MmWavePointToPointEpcHelper::X2LinkDataRate", DataRateValue (DataRate ("1000Gb/s")));
   Config::SetDefault ("ns3::MmWavePointToPointEpcHelper::X2LinkMtu",  UintegerValue (10000));
   Config::SetDefault ("ns3::MmWavePointToPointEpcHelper::S1uLinkDelay", TimeValue (MicroSeconds (1000)));
-  Config::SetDefault ("ns3::MmWavePointToPointEpcHelper::S1apLinkDelay", TimeValue (MicroSeconds (10000)));
+  Config::SetDefault ("ns3::MmWavePointToPointEpcHelper::S1apLinkDelay", TimeValue (MicroSeconds (mmeLatency)));
   Config::SetDefault ("ns3::LteRlcUm::MaxTxBufferSize", UintegerValue (bufferSize * 1024 * 1024));
   Config::SetDefault ("ns3::LteRlcUmLowLat::MaxTxBufferSize", UintegerValue (bufferSize * 1024 * 1024));
   Config::SetDefault ("ns3::LteRlcAm::StatusProhibitTimer", TimeValue (MilliSeconds (10.0)));
@@ -226,12 +260,14 @@ main (int argc, char *argv[])
 
   Config::SetDefault ("ns3::LteEnbRrc::FixedTttValue", UintegerValue (150));
   Config::SetDefault ("ns3::LteEnbRrc::CrtPeriod", IntegerValue (ReportTablePeriodicity));
-  Config::SetDefault ("ns3::LteEnbRrc::OutageThreshold", DoubleValue (outThreshold));
+  Config::SetDefault ("ns3::LteEnbRrc::OutageThreshold", DoubleValue (outageTh));
   Config::SetDefault ("ns3::MmWaveEnbPhy::UpdateSinrEstimatePeriod", IntegerValue (ReportTablePeriodicity));
   Config::SetDefault ("ns3::MmWaveEnbPhy::Transient", IntegerValue (vectorTransient));
-  Config::SetDefault ("ns3::MmWaveEnbPhy::NoiseAndFilter", BooleanValue (false));
-  Config::SetDefault ("ns3::McUePdcp::LteUplink", BooleanValue (false));
+  Config::SetDefault ("ns3::MmWaveEnbPhy::NoiseAndFilter", BooleanValue (noiseAndFilter));
 
+  GlobalValue::GetValueByName ("lteUplink", booleanValue);
+  bool lteUplink = booleanValue.Get ();
+  Config::SetDefault ("ns3::McUePdcp::LteUplink", BooleanValue (lteUplink));
   // settings for the 3GPP the channel
   Config::SetDefault ("ns3::ThreeGppChannelModel::UpdatePeriod", TimeValue (MilliSeconds (updatePeriod)));
   Config::SetDefault ("ns3::ThreeGppChannelConditionModel::UpdatePeriod", TimeValue (MilliSeconds (updatePeriod)));
